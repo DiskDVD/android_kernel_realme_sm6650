@@ -28,6 +28,7 @@
 #include "host.h"
 #include "bus.h"
 #include "mmc_ops.h"
+#include "quirks.h"
 #include "sd.h"
 #include "sd_ops.h"
 
@@ -1121,7 +1122,7 @@ static int sd_parse_ext_reg_power(struct mmc_card *card, u8 fno, u8 page,
 	card->ext_power.rev = reg_buf[0] & 0xf;
 
 	/* Power Off Notification support at bit 4. */
-	if (reg_buf[1] & BIT(4))
+	if ((reg_buf[1] & BIT(4)) && !mmc_card_broken_sd_poweroff_notify(card))
 		card->ext_power.feature_support |= SD_EXT_POWER_OFF_NOTIFY;
 
 	/* Power Sustenance support at bit 5. */
@@ -1479,6 +1480,9 @@ retry:
 			goto free_card;
 	}
 
+	/* Apply quirks prior to card setup */
+	mmc_fixup_device(card, mmc_sd_fixups);
+
 	err = mmc_sd_setup_card(host, card, oldcard != NULL);
 	if (err)
 		goto free_card;
@@ -1822,8 +1826,15 @@ int mmc_attach_sd(struct mmc_host *host)
 	WARN_ON(!host->claimed);
 
 	err = mmc_send_app_op_cond(host, 0, &ocr);
-	if (err)
-		return err;
+	if (err) {
+		pr_err("first mmc_send_app_op_cond fail, retry after 500ms delay\n");
+		mmc_delay(500);
+		err = mmc_send_app_op_cond(host, 0, &ocr);
+		if (err) {
+			pr_err("second mmc_send_app_op_cond get voltage value error\n");
+			return err;
+		}
+	}
 
 	mmc_attach_bus(host, &mmc_sd_ops);
 	if (host->ocr_avail_sd)
@@ -1880,6 +1891,8 @@ err:
 
 	pr_err("%s: error %d whilst initialising SD card\n",
 		mmc_hostname(host), err);
+
+	trace_android_vh_mmc_attach_sd(host, err);
 
 	return err;
 }

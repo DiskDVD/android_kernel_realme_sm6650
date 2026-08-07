@@ -210,7 +210,7 @@ static void *guest_s2_zalloc_pages_exact(size_t size)
 {
 	void *addr = hyp_alloc_pages(&current_vm->pool, get_order(size));
 
-	WARN_ON(size != (PAGE_SIZE << get_order(size)));
+	WARN_ON(!addr || size != (PAGE_SIZE << get_order(size)));
 	hyp_split_page(hyp_virt_to_page(addr));
 
 	return addr;
@@ -366,6 +366,9 @@ int __pkvm_guest_relinquish_to_host(struct pkvm_hyp_vcpu *vcpu,
 	if (!ret && data.pa) {
 		WARN_ON(host_stage2_set_owner_locked(data.pa, PAGE_SIZE, PKVM_ID_HOST));
 		WARN_ON(kvm_pgtable_stage2_unmap(&vm->pgt, ipa, PAGE_SIZE));
+
+		if (pkvm_ipa_range_has_pvmfw(vm, ipa, ipa + PAGE_SIZE))
+			vm->kvm.arch.pkvm.pvmfw_load_addr = PVMFW_INVALID_LOAD_ADDR;
 	}
 
 	guest_unlock_component(vm);
@@ -1015,6 +1018,10 @@ static int __host_check_page_state_range(u64 addr, u64 size,
 		.desired	= state,
 		.get_page_state	= host_get_page_state,
 	};
+	u64 end;
+
+	if (check_add_overflow(addr, size, &end))
+		return -EINVAL;
 
 	hyp_assert_lock_held(&host_mmu.lock);
 	return check_page_state_range(&host_mmu.pgt, addr, size, &d);
@@ -1122,7 +1129,9 @@ static int host_ack_donation(u64 addr, const struct pkvm_mem_transition *tx)
 
 static int host_ack_unshare(u64 addr, const struct pkvm_mem_transition *tx)
 {
-	return __host_ack_transition(addr, tx, PKVM_PAGE_SHARED_BORROWED);
+	u64 size = tx->nr_pages * PAGE_SIZE;
+
+	return __host_check_page_state_range(addr, size, PKVM_PAGE_SHARED_BORROWED);
 }
 
 static int host_complete_share(u64 addr, const struct pkvm_mem_transition *tx,
@@ -1237,9 +1246,6 @@ static int hyp_ack_unshare(u64 addr, const struct pkvm_mem_transition *tx)
 	if (tx->initiator.id == PKVM_ID_HOST && hyp_page_count((void *)addr))
 		return -EBUSY;
 
-	if (__hyp_ack_skip_pgtable_check(tx))
-		return 0;
-
 	return __hyp_check_page_state_range(addr, size,
 					    PKVM_PAGE_SHARED_BORROWED);
 }
@@ -1306,6 +1312,10 @@ static int __guest_check_page_state_range(struct pkvm_hyp_vcpu *vcpu, u64 addr,
 		.desired	= state,
 		.get_page_state	= guest_get_page_state,
 	};
+	u64 end;
+
+	if (check_add_overflow(addr, size, &end))
+		return -EINVAL;
 
 	hyp_assert_lock_held(&vm->lock);
 	return check_page_state_range(&vm->pgt, addr, size, &d);
