@@ -32,7 +32,7 @@ jobs:
             libelf-dev libncurses-dev libssl-dev zlib1g-dev \
             liblz4-tool libzstd-dev
 
-      - name: Disable missing Oplus Kconfig references
+      - name: Disable missing Kconfig references
         run: |
           python3 - <<'PY'
           import os
@@ -58,14 +58,12 @@ jobs:
                   if not match:
                       continue
                   target = match.group(2)
-                  if "oplus" not in target.lower():
-                      continue
                   if os.path.exists(target):
                       continue
                   missing.append(f"{name}:{index + 1} -> {target}")
                   lines[index] = (
                       match.group(1)
-                      + "# Disabled for analysis build: missing optional Oplus Kconfig: "
+                      + "# Disabled for analysis build: missing Kconfig: "
                       + target
                       + "\n"
                   )
@@ -77,33 +75,11 @@ jobs:
                   except UnicodeEncodeError:
                       print(f"Cannot write non-UTF8 file: {name}")
           if missing:
-              print("Disabled absent Oplus Kconfig references:")
+              print("Disabled absent Kconfig references:")
               for entry in missing:
                   print(f"  {entry}")
           else:
-              print("No missing Oplus source Kconfig references found.")
-          PY
-
-      - name: Disable missing Oplus Makefile entries
-        run: |
-          python3 - <<'PY'
-          import re
-          from pathlib import Path
-          makefile = Path("kernel/locking/Makefile")
-          if makefile.is_file():
-              lines = makefile.read_text(encoding="utf-8").splitlines(keepends=True)
-              new_lines = []
-              removed = False
-              for line in lines:
-                  if "oplus_locking.o" in line:
-                      line = line.replace("oplus_locking.o", "")
-                      removed = True
-                  new_lines.append(line)
-              if removed:
-                  makefile.write_text("".join(new_lines), encoding="utf-8")
-                  print("Removed oplus_locking.o from kernel/locking/Makefile")
-              else:
-                  print("No oplus_locking.o entry found")
+              print("No missing Kconfig references found.")
           PY
 
       - name: Configure kernel
