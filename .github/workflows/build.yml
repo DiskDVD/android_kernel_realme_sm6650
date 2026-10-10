@@ -32,6 +32,20 @@ jobs:
             libelf-dev libncurses-dev libssl-dev zlib1g-dev \
             liblz4-tool libzstd-dev
 
+      - name: Clone vendor modules and devicetree
+        run: |
+          git clone --depth=1 https://github.com/DiskDVD/android_kernel_modules_and_devicetree_realme_sm6650.git /tmp/vendor-repo
+          echo "Vendor repo cloned."
+          ls -la /tmp/vendor-repo
+          if [ -d /tmp/vendor-repo/kernel_platform ]; then
+            cp -r /tmp/vendor-repo/kernel_platform/* .
+          fi
+          if [ -d /tmp/vendor-repo/vendor ]; then
+            cp -r /tmp/vendor-repo/vendor/* .
+          fi
+          echo "Vendor repo merged into kernel tree."
+          ls -la
+
       - name: Disable missing Kconfig references
         run: |
           python3 - <<'PY'
