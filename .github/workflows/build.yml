@@ -46,8 +46,12 @@ jobs:
                   continue
               if not os.path.isfile(name):
                   continue
-              with open(name, "r", encoding="utf-8") as f:
-                  lines = f.readlines()
+              try:
+                  with open(name, "r", encoding="utf-8") as f:
+                      lines = f.readlines()
+              except UnicodeDecodeError:
+                  print(f"Skipping non-UTF8 file: {name}")
+                  continue
               changed = False
               for index, line in enumerate(lines):
                   match = source_re.match(line.rstrip("\n"))
@@ -67,8 +71,11 @@ jobs:
                   )
                   changed = True
               if changed:
-                  with open(name, "w", encoding="utf-8") as f:
-                      f.writelines(lines)
+                  try:
+                      with open(name, "w", encoding="utf-8") as f:
+                          f.writelines(lines)
+                  except UnicodeEncodeError:
+                      print(f"Cannot write non-UTF8 file: {name}")
           if missing:
               print("Disabled absent Oplus Kconfig references:")
               for entry in missing:
