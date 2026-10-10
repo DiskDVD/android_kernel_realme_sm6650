@@ -96,6 +96,17 @@ jobs:
               print("No missing Kconfig references found.")
           PY
 
+      - name: Disable Oplus vendor configs
+        run: |
+          cat >> arch/arm64/configs/gki_defconfig << 'EOF'
+
+          # CONFIG_OPLUS_FEATURE_BTUART_UX is not set
+          # CONFIG_OPLUS_FEATURE_ABORT_MM is not set
+          # CONFIG_OPLUS_POWER_NOTIFIER is not set
+          # CONFIG_OPLUS_SYSTEM_KERNEL_QCOM is not set
+          # CONFIG_ANDROID_VENDOR_HOOKS is not set
+          EOF
+
       - name: Configure kernel
         run: |
           make O=out ARCH=arm64 LLVM=1 gki_defconfig
