@@ -1,9 +1,6 @@
 name: Build vmlinux
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
@@ -21,17 +18,13 @@ jobs:
           ref: main
           fetch-depth: 1
 
-      - name: Free runner disk space
-        shell: bash
+      - name: Free disk space
         run: |
-          set -euo pipefail
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost
           df -h /
 
-      - name: Install build dependencies
-        shell: bash
+      - name: Install dependencies
         run: |
-          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             bc bison build-essential flex gawk git make pahole python3 rsync \
@@ -39,45 +32,32 @@ jobs:
             libelf-dev libncurses-dev libssl-dev zlib1g-dev \
             liblz4-tool libzstd-dev
 
-      - name: Disable dangling optional Oplus Kconfig references
-        shell: bash
+      - name: Disable missing Oplus Kconfig references
         run: |
-          set -euo pipefail
           python3 - <<'PY'
           import os
           import re
           import subprocess
-
-          tracked = subprocess.check_output(
-              ["git", "ls-files", "-z"]
-          ).decode().split("\0")
-
-          source_re = re.compile(
-              r'^(\s*)source\s+"([^"$]+)"\s*(?:#.*)?$'
-          )
+          tracked = subprocess.check_output(["git", "ls-files", "-z"]).decode().split("\0")
+          source_re = re.compile(r'^(\s*)source\s+"([^"$]+)"\s*(?:#.*)?$')
           missing = []
-
           for name in tracked:
               if not name or os.path.basename(name) != "Kconfig":
                   continue
               if not os.path.isfile(name):
                   continue
-
               with open(name, "r", encoding="utf-8") as f:
                   lines = f.readlines()
-
               changed = False
               for index, line in enumerate(lines):
                   match = source_re.match(line.rstrip("\n"))
                   if not match:
                       continue
-
                   target = match.group(2)
                   if "oplus" not in target.lower():
                       continue
                   if os.path.exists(target):
                       continue
-
                   missing.append(f"{name}:{index + 1} -> {target}")
                   lines[index] = (
                       match.group(1)
@@ -86,90 +66,45 @@ jobs:
                       + "\n"
                   )
                   changed = True
-
               if changed:
                   with open(name, "w", encoding="utf-8") as f:
                       f.writelines(lines)
-
           if missing:
               print("Disabled absent Oplus Kconfig references:")
               for entry in missing:
                   print(f"  {entry}")
-              print("Continuing with an analysis build without those missing vendor components.")
           else:
               print("No missing Oplus source Kconfig references found.")
           PY
 
-      - name: Disable unavailable Oplus locking integration
-        shell: bash
+      - name: Disable missing Oplus Makefile entries
         run: |
-          set -euo pipefail
           python3 - <<'PY'
           import re
           from pathlib import Path
-
-          # In this checkout the header may be a dangling symlink into the
-          # absent vendor/oplus tree. Disable its include only if unresolved.
-          header = Path("kernel/locking/locking_main.h")
-          core = Path("kernel/sched/core.c")
-          include_line = '#include "../locking/locking_main.h"'
-
-          if not header.exists():
-              if not core.is_file():
-                  raise SystemExit("kernel/sched/core.c is missing")
-              text = core.read_text(encoding="utf-8")
-              if include_line in text:
-                  core.write_text(
-                      text.replace(
-                          include_line,
-                          "/* Disabled for analysis build: missing Oplus locking header */",
-                      ),
-                      encoding="utf-8",
-                  )
-                  print("Disabled include of missing kernel/locking/locking_main.h")
-              else:
-                  print("No locking_main.h include found in kernel/sched/core.c")
-          else:
-              print("Oplus locking header is present; keeping its include")
-
-          # The source file is absent from this checkout, while Makefile
-          # unconditionally requests oplus_locking.o. Drop only that object.
-          source = Path("kernel/locking/oplus_locking.c")
           makefile = Path("kernel/locking/Makefile")
-          if not source.is_file():
+          if makefile.is_file():
               lines = makefile.read_text(encoding="utf-8").splitlines(keepends=True)
               new_lines = []
               removed = False
               for line in lines:
-                  if re.match(r"^\s*obj-[^\s]+\s*\+=", line):
-                      updated = re.sub(r"(?<!\S)oplus_locking\.o(?=\s|$)", "", line)
-                      if updated != line:
-                          removed = True
-                          updated = re.sub(r"[ \t]+(?=\n$)", "", updated)
-                          if re.match(r"^\s*obj-[^\s]+\s*\+=\s*(?:#.*)?\n?$", updated):
-                              continue
-                          line = updated
+                  if "oplus_locking.o" in line:
+                      line = line.replace("oplus_locking.o", "")
+                      removed = True
                   new_lines.append(line)
-
               if removed:
                   makefile.write_text("".join(new_lines), encoding="utf-8")
-                  print("Removed unavailable oplus_locking.o from kernel/locking/Makefile")
+                  print("Removed oplus_locking.o from kernel/locking/Makefile")
               else:
-                  print("No oplus_locking.o Makefile entry needed removal")
-          else:
-              print("kernel/locking/oplus_locking.c is present; keeping its build entry")
+                  print("No oplus_locking.o entry found")
           PY
 
       - name: Configure kernel
-        shell: bash
         run: |
-          set -euo pipefail
           make O=out ARCH=arm64 LLVM=1 gki_defconfig
 
-      - name: Enable debug information
-        shell: bash
+      - name: Enable debug info
         run: |
-          set -euo pipefail
           scripts/config --file out/.config \
             -e DEBUG_INFO \
             -e DEBUG_INFO_DWARF4 \
@@ -177,32 +112,27 @@ jobs:
           make O=out ARCH=arm64 LLVM=1 olddefconfig
 
       - name: Build vmlinux
-        shell: bash
         run: |
-          set -euo pipefail
           make O=out ARCH=arm64 LLVM=1 -j"$(nproc)" vmlinux
           test -s out/vmlinux
 
-      - name: Verify output
-        shell: bash
+      - name: Verify
         run: |
-          set -euo pipefail
-          test -s out/vmlinux
           file out/vmlinux
-          ls -lh out/vmlinux out/.config out/System.map
+          ls -lh out/vmlinux out/System.map
 
-      - name: Upload vmlinux and config
+      - name: Upload vmlinux
         uses: actions/upload-artifact@v4
         with:
-          name: vmlinux-main-analysis
+          name: vmlinux-main
           path: |
             out/vmlinux
-            out/.config
             out/System.map
+            out/.config
           if-no-files-found: error
           retention-days: 14
 
-      - name: Upload configuration for debugging on failure
+      - name: Upload config on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
